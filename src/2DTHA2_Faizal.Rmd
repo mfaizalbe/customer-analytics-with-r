@@ -1,0 +1,224 @@
+---
+title: "Take Home Assignment 2 (Faizal)"
+author: "DLPI 2D Customer Analytics (Batch 9)"
+date: "2026-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Case Scenario: Library Usage Analysis
+
+A university library has been tracking visits made by users over the past few months. Each record includes user demographics, visit duration, and number of books borrowed. Your task is to use RFM analysis (Recency, Frequency, and "Monetary" in terms of total books borrowed) to segment users and generate actionable insights for improving library engagement.
+
+Answer the following questions using the dataset `library_visits_THA2.xlsx`. Show your code and interpretations clearly.
+
+```{r package}
+pacman::p_load(dplyr, lubridate, readxl, ggplot2)
+```
+
+```{r import data}
+#Import the library dataset
+df <- read_xlsx("../data/library_visits_THA2.xlsx")
+str(df)
+```
+
+# Q1. Preprocess the dataset and calculate RFV metrics for each user. Assign 1–3 scores for Recency, Frequency, and Volume using tertiles, and store the results in a new dataframe called `df_rfv` 
+
+1. Recency: Days since last visit (assume today is "2025-07-30")
+2. Frequency: Number of visits
+3. Volume: Total books borrowed
+
+```{r}
+# Set reference date
+reference_date <- as.Date('2025-07-30')
+
+#Change variables in character format to factor
+df <- df %>% mutate_if(is.character,as.factor)
+str(df)
+
+# Change Date column to Date object in Year-Month-Day format ("YYYY-MM-DD")
+df$Date <- ymd(df$Date) 
+str(df)
+
+#Check for missing values
+sum(is.na(df))
+
+# To identify specific rows with missing values
+df[rowSums(is.na(df)) > 0, ] 
+
+#Check for duplicates
+sum(duplicated(df))
+
+#Compute Recency (days since last visit)
+df_recency <- df %>%
+  group_by(UserID) %>%
+  summarise(Recency = as.numeric(reference_date - max(Date)))
+
+#Compute Frequency (number of visits per customer)
+df_frequency <- df %>%
+  group_by(UserID) %>%
+  summarise(Frequency = n())
+
+#Compute Volume per customer
+df_volume <- df %>%
+  group_by(UserID) %>%
+  summarise(Volume = sum(BookBorrowed, na.rm = TRUE))
+
+#Merge all three metrics into a single dataframe
+df_rfv <- df_recency %>%
+  inner_join(df_frequency, by = "UserID") %>%
+  inner_join(df_volume, by = "UserID")
+
+#Assign tertiles-based scores (1, 2, 3)
+df_rfv <- df_rfv %>%
+  mutate(Recency_Score = ntile(Recency, 3),       
+    Frequency_Score = ntile(Frequency, 3), 
+    Volume_Score = ntile(Volume, 3) 
+    )
+
+#Adjust Recency Score so that lower recency gets higher score
+df_rfv$Recency_Score <- 4 - df_rfv$Recency_Score  # Convert 1→3, 2→2, 3→1
+```
+
+# Q2. Based on RFV scores, segment users from `df_rfv` into the following 6 categories based on the order listed below and report the number of users in each category: 
+* Avid Readers: R: 3, F: 3, V: 3
+* Consistent Borrowers: R: 2-3, F: 2-3, V: 2-3
+* Newcomers: R: 3, F: 1-2, V: 1-2
+* At-Risk Users: R: 1-2, F: 2-3, V: 2-3
+* Inactive: R: 1-2, F: 1-2, V: 1-2
+* Others: all the rest
+
+```{r}
+# Segments are assigned hierarchically in the order listed to avoid overlap
+#Assign customer segments based on RFD scores
+df_rfv <- df_rfv %>%
+  mutate(
+    Segment = case_when(
+      Recency_Score >= 3 & Frequency_Score >= 3 & Volume_Score >= 3 ~ "Avid Readers",
+      Recency_Score >= 2 & Frequency_Score >= 2 & Frequency_Score <= 3 & Volume_Score >= 2 & Volume_Score <= 3 ~ "Consistent Borrowers",
+      Recency_Score == 3 & Frequency_Score <= 2 & Volume_Score <= 2 ~ "Newcomers",
+      Recency_Score <= 2 & Frequency_Score >= 2 & Volume_Score >= 2 ~ "At-Risk Users",
+      Recency_Score >= 1 & Recency_Score <= 2 & Frequency_Score >= 1 & Frequency_Score <= 2 & 
+        Volume_Score >= 1 & Volume_Score <= 2 ~ "Inactive",
+      TRUE ~ "Others"
+    )
+  )
+
+
+table(df_rfv$Segment)
+
+# You should get this output:
+       # At-Risk Users         Avid Readers Consistent Borrowers             Inactive        #            45                   44                  140                  147        #     Newcomers               Others 
+       #            33                   45 
+```
+
+# Q3. Visualise the RFV segments using a bar chart and interpret the visualisation. Provide your interpretation in at least 30 words. 
+```{r}
+order <- c("Avid Readers", "Consistent Borrowers", "Newcomers", "At-Risk Users", "Inactive", "Others")
+
+df_rfv$Segment <- factor(df_rfv$Segment, levels = order)
+
+ggplot(df_rfv, aes(x = Segment, fill = Segment)) +
+  geom_bar() +
+  labs(title = "Customer Segmentation Based on RFV",
+       x = "Customer Segment",
+       y = "User Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#Add your interpretation here
+#Inactive is the largest group followed by Consistent Borrowers, showing that there are almost  many regular users who use it often. The other groups, such as Avid Readers, At-Risk Users, and Newcomers, are smaller, which suggests that while there is a strong group of active users, there is also a need to encourage inactive and at-risk users to come back and stay engaged.
+
+```
+
+# Q4. Investigate the characteristics of the “Inactive” user segment
+
+Using the RFV segmentation results, analyse the demographic and behavioural characteristics of users classified as Inactive. Specifically:
+
+- Examine the age group distribution of Inactive users.
+
+- Examine the duration of time spent in the library during the Inactive users’ most recent visit, by grouping visit duration into meaningful categories.
+
+- Visualise both distributions using appropriate bar charts and interpret the observed patterns.
+
+```{r}
+# Filter "Inactive" group
+df_inactive <- df_rfv %>% filter(Segment == "Inactive")
+
+df <- df %>%
+  mutate(Age_group = case_when(
+    Age <= 25 ~ "<=25",
+    Age <= 35 ~ "26-35",
+    Age <= 50 ~ "36-50",
+    Age <= 65 ~ "51-65",
+    TRUE      ~ "66+"
+  ))
+
+df <- df %>%
+  mutate(Duration_group = case_when(
+    Duration <= 60 ~ "<=60",
+    Duration <= 120 ~ "61-120",
+    Duration <= 180 ~ "121-180",
+    TRUE      ~ ">=181"
+  )) %>% 
+  mutate(Duration_group= factor(Duration_group, levels= c("<=60", "61-120", "121-180", ">=181")))
+
+# Prepare demographic data (based on most recent visit per user)
+df_demo <- df %>%
+  arrange(UserID, desc(Date)) %>% 
+  group_by(UserID) %>%
+  slice(1) %>% 
+  ungroup() %>%
+  select(UserID, Age_group, Duration_group)
+
+
+# merge with segments from df_inactive
+df_inactive_demo <- df_inactive %>%
+  left_join(df_demo, by = "UserID")
+
+
+# Create bar chart of df_inactive_demo by Age group:
+ggplot(df_inactive_demo, aes(x = Age_group, fill = Age_group)) +
+  geom_bar() +
+  labs(title = "Inactive Users by Age Group",
+       x = "Age Group",
+       y = "Inactive User Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+# Create bar chart of df_inactive_demo by Duration group:
+ggplot(df_inactive_demo, aes(x = Duration_group, fill = Duration_group)) +
+  geom_bar() +
+  labs(title = "Inactive Users by Duration Group",
+       x = "Duration Group",
+       y = "Inactive User Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Comment your insights here:
+#All users both active/inactive are 25 years and below thus differences in usage are likely driven by other factors (such as course, year of study, or how long they’ve been inactive) rather than age.
+# Most inactive users have been disengaged for more than 60 days, with the largest group in the 61–120 day range and another substantial group at 181 days or more, while the ≤60‑day group is the smallest and 121–180 days sits in between, suggesting that once users become inactive they tend to remain so for several months rather than returning quickly.
+
+
+```
+
+
+# Q5. Recommend strategies to improve engagement for Inactive users 
+
+Based on the characteristics identified in Question 4, propose one or two actionable strategies the library could implement to re-engage users in the Inactive segment.
+
+```{r}
+# Comment here
+# Target 60–90 day inactives with emails/events before they become long-term dropouts; survey ≥181 day users for feedback to refine services; time outreach to semester starts/exams; boost digital service awareness (e-resources, chat) as students often switch to Google instead.
+
+
+
+
+
+```
+

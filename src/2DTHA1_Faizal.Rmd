@@ -1,0 +1,149 @@
+---
+title: "Take Home Asssignment 1 (Faizal)"
+author: "DLPI 2D Customer Analytics (Batch 9)"
+date: "2026-02-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Case Scenario: University Restaurant Analysis
+Problem Description:
+
+A new restaurant has opened in University Town and is collecting anonymised data on student visits. Each record contains basic demographic and academic information, as well as the check-in and check-out times for each visit.
+
+You are tasked to analyze this dataset and help the owner gain deeper insights into their student clientele and identify ways to improve service.
+
+Answer the following questions using the dataset `restaurant.xlsx`. Show your code and interpretations clearly.
+
+```{r packages}
+pacman::p_load(tidyverse, readxl, lubridate)
+```
+
+## Import the dataset
+```{r import}
+df3 <- read_excel("../data/restaurant.xlsx")
+```
+
+## Q1. How many unique students visited the restaurant?
+
+```{r q1}
+# Insert your codes here
+n_distinct(df3$StudentID)
+
+
+# Ans: There are 99 unique students.
+```
+
+
+## Q2. For each student, calculate the mean latency (in days) between consecutive visits to the restaurant and store your result in a new dataframe called `df_latency`. Consider the number of visits a student must have to calculate latency. Ensure that the dataset is sorted by Checkin time for each student.
+
+```{r q2}
+# Insert your codes here
+df_latency <- df3 %>% 
+  arrange(StudentID, Checkin) %>% 
+  group_by(StudentID) %>% 
+  mutate(Latency = as.numeric(difftime(Checkin, lag(Checkout), units = "days"))) %>% 
+  select(StudentID, Latency) %>%
+  filter(!is.na(Latency))
+
+```
+
+
+## Q3. Using the mean latencies calculated in Q2, what is the overall average latency across all students? Round your answer to the nearest whole number.
+
+```{r q3}
+# Insert your codes here
+# Calculate average Latency by StudentID
+df_AvgLatency <- df_latency %>%
+  group_by(StudentID) %>% 
+  summarize(Average_Latency = round(mean(Latency))) 
+
+# Compute the overall average Latency based on all Students
+overall_average_latency <- mean(df_latency$Latency)
+overall_average_latency
+
+# Ans: The overall average latency is 26.5 days.
+```
+
+
+## Q4. Based on the average latency calculated in Q3, describe when it would be appropriate to send reminders to prevent students from churning, and when it would make sense to offer special promotions to entice returning visits? (1 mark)
+
+```{r q4}
+# Answer in words. Remember to comment your answers.
+# It would be appropriate to send reminders on day 40 as normally student returns every 26.5 days. It would make sense to offer special promotion day 50 as not to spam too early or wait too long.
+
+```
+
+
+## Q5. Using the result from Q3 as your threshold, determine the number of students whom you need to offer special promotions to entice returning visits. (Hint: consider students whose latency is greater than or equal to the threshold.) 
+
+```{r q5}
+#Threshold from Q3, rounded off to the nearest whole number
+threshold <- overall_average_latency
+
+student_promotion <- df_AvgLatency %>%
+  filter(Average_Latency >= threshold) %>%
+  nrow()
+
+# Ans: We will need to offer special promotions to 43 students to entice returning visits.
+```
+
+
+## Q6. Using the student-level latency calculated previously, plot a barplot of the mean latency (in days) by faculty. Identify the faculty with the highest average latency and the faculty with the lowest average latency. 
+
+```{r q6}
+# Insert your codes here
+# Join faculty back to df_latency
+df_latency_faculty <- df3 %>%
+  select(StudentID, Faculty) %>%
+  distinct() %>%
+  right_join(df_AvgLatency, by = "StudentID")
+
+#Calculate mean latency by faculty
+faculty_latency <- df_latency_faculty %>%
+  group_by(Faculty) %>%
+  summarise(avg_latency = mean(Average_Latency), group = "drop") %>%
+  arrange(desc(avg_latency))
+
+# Create the bar chart
+bar_pos <- barplot(
+  faculty_latency$avg_latency,
+  names.arg = faculty_latency$Faculty,
+  horiz = TRUE,
+  col = "steelblue",
+  xlab = "Mean Latency (days)",
+  main = "Average Latency by Faculty (days)",
+  las = 1,
+  xlim = c(0, 40)
+)
+
+# Ans: FASS faculty has the lowest average latency while Med faculty has the highest average latency. 
+```
+
+
+## Q7. We wish to explore the students in the faculty identified in Q6. Create boxplots showing the duration of visits (minutes) for students from each major within this faculty. Using the boxplots, determine which major has the highest median visit duration. 
+
+```{r}
+# Insert your codes here
+# Calculate visit duration (minutes)
+df_visits <- df3 %>%
+  mutate(duration_min = as.numeric(difftime(Checkout, Checkin, units = "mins"))) %>%
+  filter(Faculty == "Med")
+
+# Data Visualisation
+ggplot(df_visits, aes(x = Major, y = duration_min)) +
+  geom_boxplot(fill = "lightblue") +
+  coord_flip() +
+  labs(
+    title = "Visit Duration by Major (Med Faculty)",
+    x = "Major",
+    y = "Duration (minutes)"
+  ) +
+  theme_minimal()
+
+# Based on the median visit duration, Medicine major students spend the most amount of time in the restaurant.
+```
+
