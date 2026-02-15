@@ -2,7 +2,7 @@
 
 ## 📌 Overview
 
-This repository contains assignments for the **Customer Analytics with R** course.
+This repository contains my assignments for the **Customer Analytics with R** course.
 <br>It includes datasets and R scripts used for analysis.
 
 ## 🎯 Objectives
