@@ -1,0 +1,184 @@
+---
+title: "DLPI 2D - Workshop 3, Take-Home Assignment 3"
+author: "m.faizal"
+date: "Feb 2026"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Learning Objectives
+This assignment builds on the skills developed in Workshops 1, 2 and 3. This may include:
+
+-   Skills from Workshops 1 and 2,
+-   K-means clustering,
+-   Hierarchical clustering.
+
+### Requirements
+-   Update the author in the header of the RMD to include your NUSNET ID (the first part of your email address).
+-   Answer all questions within the R Markdown file, and knit it into HTML or PDF.
+-   Each question will specify what output is expected or required. Take note of any specific instructions for each question.
+-   Submit your `RMD` file **and** knitted `HTML` or `PDF` file via the Canvas assignment submission link.
+
+Please reach out to your instructors as soon as possible if you are unsure about any of the submission requirements.
+
+### Use of AI and Code Commenting
+-   You are encouraged to use generative AI to assist in the drafting or debugging of code. However, the final code must run and knit without errors.
+-   In accordance with NUS policies, you must declare the sections where you used AI, and the level of assistance that it provided.
+-   You are REQUIRED to add comments to your code by using the '*hash mark*' symbol `#` at the start of your comments. These comments should [concisely]{.underline} explain what your code is doing. This is an opportunity to explain other steps and checks that you undertook (such as manually reviewing the contents of a dataframe).
+
+------------------------------------------------------------------------
+
+# Assignment Background
+
+For this assignment, we will be comparing the outputs from k-means clustering and hierarchical clustering.
+The data for this assignment comes from the Tidy Tuesday project (<https://github.com/rfordatascience/tidytuesday>). This crowd-sourced project explores various interesting datasets. 
+
+We will be looking at data from Spotify in 2020. See the link for further details (<https://github.com/rfordatascience/tidytuesday/tree/main/data/2020/2020-01-21>). We want to explore relationships between a song's genre and its key musical metrics. There are six genres in this dataset: EDM, Latin, Pop, R&B, Rap and Rock.
+
+### Data Preparation
+
+The following code chunk will load the required libraries and import the data. You will have one dataframe, `df`. Do not edit this chunk.
+
+**Hint**: You must run the provided code first to import the data.
+
+```{r Data Import, message=FALSE, warning=FALSE, results=FALSE}
+library(pacman)
+p_load(tidyverse, readxl, ggplot2, caret, cluster, factoextra, plotly)
+
+df <- data.frame(read.csv(file = "../data/spotify_songs.csv")) %>%
+  select(c(track_name, track_artist, track_popularity, playlist_genre,
+           danceability, energy, tempo)) %>%
+  filter(track_popularity > 75 & playlist_genre == "pop")
+```
+
+### Question 1 (3 marks)
+**Problem**: We want to examine the relationships between the songs in this list. We suspect that there are relationships between the selected variables for each song.
+
+We will start by exploring and preparing the data. Follow the commented prompts below.
+
+**Output**: Store the manipulated data in a dataframe called `qn1`.
+
+**Hint**: `qn1` should contain 693 rows, and `fivenum(qn1$track_popularity)` should give the following values (rounded):
+'| Min.  | Q1  | Med.  | Q3 | Max. |
+'-----------------------------------
+'| -1.08 |-0.88| -0.29 |0.49| 2.46 |
+
+```{r Question 1 - Data Exploration and Preparation, eval=TRUE, echo=TRUE}
+# Use code to count the number of missing data points. Use the print() function to print the result into the console.
+sum(is.na(df))
+
+# Scale all numerical variables.
+# Select relevant numeric features
+df_numeric <- df %>% select(track_popularity, danceability, energy, tempo)
+
+# Scale the data to normalise different value ranges.
+df_scaled <- as.data.frame(scale(df_numeric))
+
+# Detect and remove any outliers in the numerical data. Recall from DLPB how we used 1.5 x IQR to detect outliers. Hint, run ?quantile in the console.
+# AI assistance: Suggested IQR-based outlier filtering structure
+# manual review: verified five-number summary and number of rows after filtering
+track_pop_quarts <- quantile(df_scaled$track_popularity, probs = seq(0, 1, 0.25))
+track_pop_lower <- track_pop_quarts[2] - 1.5 * (track_pop_quarts[4] - track_pop_quarts[2])
+track_pop_upper <- track_pop_quarts[4] + 1.5 * (track_pop_quarts[4] - track_pop_quarts[2])
+
+danceability_quarts <- quantile(df_scaled$danceability, probs = seq(0, 1, 0.25))
+danceability_lower <-  danceability_quarts[2] - 1.5 * (danceability_quarts[4] - danceability_quarts[2])
+danceability_upper <-  danceability_quarts[4] + 1.5 * (danceability_quarts[4] - danceability_quarts[2])
+
+energy_quarts <- quantile(df_scaled$energy, probs = seq(0, 1, 0.25))
+energy_lower <-  energy_quarts[2] - 1.5 * (energy_quarts[4] - energy_quarts[2])
+energy_upper <-  energy_quarts[4] + 1.5 * (energy_quarts[4] - energy_quarts[2])
+
+tempo_quarts <- quantile(df_scaled$tempo, probs = seq(0, 1, 0.25))
+tempo_lower <-  tempo_quarts[2] - 1.5 * (tempo_quarts[4] - tempo_quarts[2])
+tempo_upper <-  tempo_quarts[4] + 1.5 * (tempo_quarts[4] - tempo_quarts[2])
+
+
+# Now filter df based on the upper and lower bounds you calculated.
+qn1 <- df_scaled %>%
+  filter(track_popularity >= track_pop_lower & track_popularity <= track_pop_upper) %>%
+  filter(danceability >= danceability_lower & danceability <= danceability_upper) %>%
+  filter(energy >= energy_lower & energy <= energy_upper) %>%
+  filter(tempo >= tempo_lower & tempo <= tempo_upper)
+
+# Check your responses
+NROW(qn1)
+round(fivenum(qn1$track_popularity), 2)
+```
+
+### Question 2 (4 marks)
+**Problem**: We want to explore k-means clustering of songs based on `danceability`, `tempo` and `energy`.
+
+In the code chunk below, conduct k-means clustering on the `qn1` dataframe using `danceability`, `tempo` and `energy`.
+
+**Output**: Generate a scatterplot of the clustering and comment on the clustering findings and limitations.
+
+```{r Question 2, eval=TRUE, echo=TRUE}
+# Select the desired variables
+qn1_desired <- qn1[, 2:4]
+summary(qn1_desired)
+
+# Determine the optimal number of clusters and comment on whether the number of clusters is good.
+# optimal number of cluster is 3 as it decreases after 3.
+fviz_nbclust(qn1_desired, kmeans, method = "wss") +
+  ggtitle("Elbow Method for Optimal Clusters")
+
+# Use k = 3 clusters and conduct k-means clustering.
+# For reproducibility
+set.seed(123)
+
+# k=3 clusters
+k3 <- kmeans(qn1_desired, centers = 3, nstart = 25)
+
+# Generate and interpret a scatterplot of these 3 clusters across the 3 selected variables.
+# Visualise clusters using 2D scatter plot with color-coded clusters.
+fviz_cluster(k3, data = qn1_desired, geom = "point", ellipse.type = "norm") +  ggtitle("K-Means Clustering (k=3)")
+# `danceability`, `tempo` and `energy, the cluster overlaps indicates that the songs variables correlated depending on the artist's intepretation.
+
+```
+
+### Question 3 (3 marks)
+Let us repeat this clustering process with hierarchical clustering. Again we will reuse `danceability`, `tempo` and `energy` variables from the `qn1` dataframe.
+
+**Output**: Generate a scatterplot and comment on the clustering findings and limitations.
+
+```{r Question 3}
+# Select the desired variables. Conduct hierarchical clustering using Euclidean distance and Ward Linkage, and cut the dendrogram to produce 3 clusters.
+# Randomly sample 30 from the qn1_desired dataset
+set.seed(10)
+df1 <- qn1_desired[sample(nrow(qn1_desired), 30),]
+
+#Calculate the distance matrix
+df1_dist <- dist(df1, method="euclidean")
+
+# Perform Hierarchical Clustering based on the Euclidean distance using Ward Linkage
+df1_hc <- hclust(d=df1_dist, method="ward")
+
+# Obtain k=3 Hierarchical Cluster Assignments
+df1$hcluster3 <- cutree(tree=df1_hc, k=3)
+
+# Show the number of observations in each cluster group
+table(df1$hcluster3)
+
+# Plot the dendrogram
+plot(df1_hc, hang = -1, cex =0.8) + 
+
+# Draw a threshold line to cut dendogram to produce 3 clusters
+abline(h = 7.15, lty = 1, col="red")
+
+# Generate and interpret a scatterplot of these 3 clusters across the 3 selected variables.
+# Plot Hierarchical Clustering observations on a 2D plot
+fviz_cluster(list(data=df1[,c("danceability", "tempo","energy")], cluster=df1$hcluster3))
+
+# Plot Hierarchical Clustering observations on a 3D plot
+plot_ly(df1, x= ~danceability, y= ~tempo, z= ~energy, type="scatter3d", mode="markers", color =~hcluster3)
+
+# Comment on any substantive differences in clustering between k-means and hierarchical clustering.
+# k-means clusters overlap, reflecting correlations between the variables, whereas hierarchical clustering produces distinct, non-overlapping clusters, indicating clearer separation between groups.
+
+```
