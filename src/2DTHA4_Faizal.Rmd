@@ -1,0 +1,268 @@
+---
+title: "DLPI 2D - Workshop 4, Take-Home Assignment 4"
+author: "m.faizal"
+date: "March 2026"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, warning = FALSE)
+```
+
+### Learning Objectives
+This assignment builds on the skills developed in Workshops 1 to 4. This may include:
+
+-   Skills from Workshops 1 to 3,
+-   Propensity modelling using logistic regression,
+-   Market basket analysis.
+
+### Requirements
+-   Update the author in the header of the RMD to include your NUSNET ID (the first part of your email address).
+-   Answer all questions within the R Markdown file, and knit it into HTML or PDF.
+-   Each question will specify what output is expected or required. Take note of any specific instructions for each question.
+-   Submit your `RMD` file **and** knitted `HTML` or `PDF` file via the Canvas assignment submission link.
+
+Please reach out to your instructors as soon as possible if you are unsure about any of the submission requirements.
+
+### Use of AI and Code Commenting
+-   You are encouraged to use generative AI to assist in the drafting or debugging of code. However, the final code must run and knit without errors.
+-   In accordance with NUS policies, you must declare the sections where you used AI, and the level of assistance that it provided.
+-   You are REQUIRED to add comments to your code by using the '*hash mark*' symbol `#` at the start of your comments. These comments should [concisely]{.underline} explain what your code is doing. This is an opportunity to explain other steps and checks that you undertook (such as manually reviewing the contents of a dataframe).
+
+------------------------------------------------------------------------
+### Data Preparation
+
+The following code chunk will load the required libraries and import the data. You will have two dataframes, `df_propensity` and `df_mba`. Do not edit this chunk.
+
+**Hint**: You must run the provided code first to import the data.
+
+```{r Data Import}
+library(pacman)
+pacman::p_load(readxl, tidyverse, car, caret, proxy, arules)
+
+df_propensity <- data.frame(read.csv(file = "../data/dlpi2d-batch9-tha4-data1.csv",
+                                     na.strings = "NA"))
+
+df_mba <- data.frame(read_excel(path = "../data/dlpi2d-batch9-tha4-data2.xlsx",
+                                na = ""))
+```
+
+# Propensity Modelling
+
+For the first part of this assignment, we will be exploring student applications for on-campus accommodation. This is synthetic anonymised data.
+
+The dataset contains 31,000+ applications, key student details and the outcome of the application.
+
+You role is to examine predictors of application success, using a simplified DIDM framework:
+1. Ask,
+2. Acquire,
+3. Analyse,
+4. Apply,
+5. Announce,
+6. Assess.
+
+### Question 1 (7 marks)
+**Problem**: You are tasked to explore the student accommodation application data to determine predictors of application success.
+
+Follow the code chunk below to use the DIDM framework to investigate the data. Take note of the requirements of each section.
+
+**Note**: This is a deliberately open-ended question that reflects the approach of a real-world data science project.
+
+```{r Question 1}
+# --> 1. ASK (this section is completed for you)
+
+# Research Question: Based on the provided dataset, what are the predictors of 
+# application success, and how good is the model in predicting success?
+
+# ---------------------------
+
+# --> 2. ACQUIRE (already completed)
+
+# ---------------------------
+
+# --> 3. ANALYSE
+
+# Your Turn to Code: Write code to examine and clean the data. Determine how 
+# to best handle these any missing or erroneous cases. Justify your decisions.
+
+# Check the dataset structure
+str(df_propensity)
+
+# Change variables in character format to factor
+df_propensity <- df_propensity %>% 
+  mutate_if(is.character,as.factor)
+
+# Check the dataset size 
+NROW(df_propensity); NCOL(df_propensity)
+
+# Return rows with missing values in any variable
+df_propensity[rowSums(is.na(df_propensity)) > 0, ]
+NROW(df_propensity[rowSums(is.na(df_propensity)) > 0, ])
+view(df_propensity[rowSums(is.na(df_propensity)) > 0, ])
+
+# Check for duplicated rows
+sum(duplicated(df_propensity))
+
+# Remove rows with missing values
+df_clean <- df_propensity[complete.cases(df_propensity), ]
+
+# Remove duplicated rows
+df_clean <- df_clean[!duplicated(df_clean), ]
+
+NROW(df_clean) # Missing and duplicate rows were removed to ensure 30,413 complete and unique responses, which is important for accurate and reliable propensity score.
+
+# You may end up with 30,413 rows of data.
+
+# ---------------------------
+
+# --> 4. APPLY
+
+# Your Turn to Code: Create a logistic regression propensity model to predict 
+# 'offered'. Use a 70:30 train:test split. Use set.seed(0). Be sure to rebalance
+# the training dataset if appropriate to do so.
+set.seed(0)
+train_set <- createDataPartition(df_clean$offered, p = 0.7,list = FALSE) # Select 70% of the df_clean
+train_imbalance <- df_clean[train_set, ] # 70%
+test <- df_clean[-train_set, ] # 30%
+
+# We will now rebalance the training set.
+summary(train_imbalance$offered)
+
+# Undersample the dominant class (that is, 'yes') to get the same subsample size
+set.seed(0)  # for reproducibility
+yes_indices <- sample(which(train_imbalance$offered == "Yes"), 4112)
+no_indices <- sample(which(train_imbalance$offered == "No"), 4112)
+
+# Combine the sampled indices
+partition <- c(yes_indices, no_indices)
+
+# Create the balanced dataset from the train_imbalance dataframe
+train <- train_imbalance[partition,]
+
+# Confirm the number of instances from each response classes  
+summary(train$offered) # 'No' = 4112, 'Yes' = 4112
+
+train$offered <- factor(train$offered, levels = c("No", "Yes"))
+
+str(train) # "classification" will be excluded as it only has 1 factor level and will cause error to the model.
+
+# Model 1 - Use all appropriate variables. 
+# Initial model (m0) - using all variables
+
+m0 <- glm(offered ~ student_id + gender + classification_sub + nationality + 
+          sg_pr_status + course_years_remaining + faculty + 
+          application_term + course,
+          data = train,
+          family = binomial)
+
+summary(m0)
+
+# Model 2 - Feature selection. Justify the removal of one variable, then re-run
+# the model using the remaining variables.
+
+# Inspect the count for nationality with offered.
+table(train$nationality, train$offered)
+
+# Inspect the count for course with offered.
+table(train$course, train$offered)
+
+# Based on summary(m0), I had to decide between removing "nationality" or "course". I chose to remove nationality because many nationality categories had very few students, making it impossible for the model to estimate their effect reliably. In contrast, most courses had enough students for the model to estimate their effects with more confidence, even if some coefficients did not have significance stars (***).
+
+m1 <- glm(offered ~ student_id + gender + classification_sub + 
+          sg_pr_status + course_years_remaining + faculty + 
+          application_term + course,
+          data = train,
+          family = binomial)
+
+summary(m1)
+
+# Your Turn to Code: Create confusion matrices for the 'test' set and the 'train' set, 
+# assuming cut-off/threshold of 50%.
+
+# Find the propensity score of each student 
+y_probs_train <- predict(m1, newdata = train, type = "response")
+hist(y_probs_train)
+
+# Add propensity score to each student
+train$propensity_score <- y_probs_train
+
+# View the first few rows of students' propensity score
+head(train[, c("student_id", "propensity_score")])
+
+# Predict whether each student would be offered using the propensity model, using threshold of 50%.
+y_pred_train <- factor(ifelse(y_probs_train > 0.5, "Yes", "No"), levels = c("No", "Yes"))
+y_true_train <- train$offered
+
+# Create the confusion matrix and evaluate how good the model is 
+confusionMatrix(data = y_pred_train, reference = y_true_train, mode = "everything", positive = "Yes")
+
+# ---------------------------
+
+# --> 5 & 6. ANNOUNCE AND ASSESS
+
+# Comment on the quality of your model: How useful is it in practice? What limitations
+# exist in the model or the dataset?
+
+# Response: 
+# The model is moderately useful for predicting student offers, achieving 71% accuracy, which means it correctly predicts about 7 out of 10 students overall. It has 64% sensitivity, so it identifies 64% of students who actually receive an offer but misses the rest, and 78% specificity, meaning it is better at correctly predicting students who are not offered. Some courses have NA values, indicating limited data for certain courses, which prevents the model from estimating their effects reliably. Additionally, the model only uses features available in the dataset (such as course, faculty, gender, classification_sub, application term, and years remaining), so other important factors influencing offers—like grades, extracurriculars, or interviews—are not included. Because of these limitations, the model should be used as a supporting tool, not as the sole basis for decisions.
+
+# AI-assisted response but main idea and correction came from me.
+ 
+```
+
+# Market Basket Analysis
+
+For the second part of this assignment, we will be exploring MBA using synthetic transaction data. The dataset contains 2000 lines of transactions.
+
+### Question 2 (3 marks)
+**Problem**: We want to explore the transactions to identify marketing opportunities.
+
+Follow the prompts in the code chunk below.
+
+```{r Question 2}
+# Convert the dataset to a suitable transactional format. Determine the top three items
+# purchased, and their count.
+trans <- df_mba %>%
+  group_by(BillNo) %>%
+  summarise(Itemname = list(unique(Itemname))) %>% 
+  pull(Itemname) %>%   
+  as("transactions")
+
+itemFrequencyPlot(trans, topN=3, type="absolute", main="Item Frequency Plot")
+
+# Count the top three items purchased
+sort(itemFrequency(trans, type = "absolute"), decreasing = TRUE)[1:3]
+
+# Utilise the apriori algorithm to generate association rules with support of at least
+# 5% and confidence of at least 70%.
+rules <- apriori(trans , parameter= list(supp=0.05, conf=0.70, target = "rules"))
+
+inspect(head(rules)) #display first 6 association rules using head function
+inspect(head(subset(rules, lift>3),3)) #display first 3 associations when lift > 3
+
+# Determine how many rules contain any of 'coffee', 'sugar' or 'creamer' in the 
+# left-hand or right-hand sides.
+
+# Rules that contain 'coffee', 'sugar' or 'creamer' in the left-hand or right-hand sides.
+
+#AI assisted to combine lhs and rhs codes from sample code in workshop 4.
+subset_rules <- subset(rules, subset = lhs %in% c("Coffee","Sugar","Creamer") | 
+                                  rhs %in% c("Coffee","Sugar","Creamer"))
+
+# Inspect the subset
+inspect(subset_rules)
+
+# Count how many rules
+length(subset_rules)
+
+# Explore the rules to find any associations with lift greater than 9. Hence, suggest
+# a strategy that utilises the high lift of these products to increase overall sales.
+
+# For rules with lift above 9, are customers who buy paper towels are very likely to also buy all-purpose cleaner, laundry detergent, or dish soap. The store could bundle these items, run joint promotions, or place them close to each other on shelves to boost overall sales.
+
+# For coffee, sugar & creamer, no rules exceed lift > 9, but rules with lift 7-7.7 show strong associations.
+# The store can also focus on bundling (i.e. offer coffee + creamer combo packs), cross-selling (i.e. place creamer next to coffee in stores), and promotions (i.e. special offers on creamer to customers who buy coffee.) to boost sales of items that are frequently bought together.
+ 
+```
