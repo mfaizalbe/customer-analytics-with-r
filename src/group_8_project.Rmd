@@ -1,0 +1,414 @@
+---
+title: "Pioneer House Residential Life Survey - Student Satisfaction & Interaction Customer Analytics"
+author: "Batch 9 / Group 8: Muhammad Faizal Bin Ehsan, Tang Wai Wah Serena, Lai Cheng Jun"
+output: html_document
+date: "`r Sys.Date()`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+#### Use of AI Declaraction:
+####### Portions of this R script, including explanations, data preparation steps, and code examples, were generated with the assistance of OpenAI's ChatGPT (GPT-5-mini) to support analysis and documentation. All final decisions, interpretations, and data handling were reviewed and executed by the author.
+
+## Load Data
+
+```{r Data Import}
+library(pacman)
+pacman::p_load(readxl, tidyverse, sentimentr, pROC, caret)
+
+# Load the Pioneer House survey dataset
+df <- data.frame(read_excel("../data/phrl_survey.xlsx"))
+str(df)
+```
+
+## Prepare Data
+
+```{r prepare-data}
+
+# Define the text columns
+text_columns <- c(
+  "Residential_experience",
+  "Interaction_with_neighbours",
+  "Interaction_with_PH_Residential_Staff_and_Student_Leaders",
+  "Memorable_residential_experience_in_PH",
+  "Interaction_with_RA",
+  "Area_RA_could_improved",
+  "Interaction_with_PM",
+  "Area_PM_could_improved",
+  "Area_MENTOR_PM_could_improved",
+  "Interaction_with_SC",
+  "Overall_experience_with_SC",
+  "Events_you_wish_from_Student_Council",
+  "Overall_Suggestion"
+)
+
+# Create a copy of df for EDA/modeling
+df_model <- df
+
+# Convert interacted columns to Yes/No
+df_model <- df_model %>%
+  mutate(
+    Interacted_RA = ifelse(Interacted_RA == 1, "Yes", "No"),
+    Interacted_with_PM = ifelse(Interacted_with_PM == 1, "Yes", "No"),
+    Interacted_with_SC = ifelse(Interacted_with_SC == 1, "Yes", "No")
+  )
+
+# Convert text columns to weighted sentiment scores
+for (col in text_columns) {
+  
+  # Sentiment score
+  sentiment_result <- sentiment(df_model[[col]]) %>%
+    group_by(element_id) %>%
+    summarise(sentiment = mean(sentiment)) %>%
+    arrange(element_id)
+  
+  # Text length
+  text_length <- nchar(df_model[[col]])
+  
+  # Weighted score: sentiment * log(1 + length)
+  weighted_score <- sentiment_result$sentiment * log1p(text_length)
+  
+  # Add as new column
+  new_col <- paste0(col, "_score")
+  df_model[[new_col]] <- weighted_score
+  
+  # Remove original text column
+  df_model[[col]] <- NULL
+}
+
+# Create highest satisfaction column, 5 = yes, 4-0 = no
+df_model$Highest_satisfaction <- ifelse(df_model$Overall_satisfaction == 5, "Yes", "No")
+
+# Remove overall_satisfaction column from df_model
+df_model <- df_model %>% select(-Overall_satisfaction)
+
+# Update RA_helpful based on keyword "helpful" to yes or no
+df_model$RA_Helpful <- ifelse(
+  grepl("helpful", df_model$RA_Helpful, ignore.case = TRUE),
+  "Yes",
+  "No"
+)
+
+# Update PM_helpful based on rating 4 or 5
+df_model$PM_Helpful <- ifelse(
+  df_model$PM_Helpful %in% 4:5,
+  "Yes",
+  "No"
+)
+
+# Replace all null in df_model with 0 because we want to use all data due to small dataset
+df_model[is.na(df_model)] <- 0
+
+# Replace PM_Name from 0 to Not applicable
+df_model$PM_Name[df_model$PM_Name == 0] <- "Not applicable"
+
+# Replace Mentor.PM.Name from 0 to Not applicable
+df_model$MENTOR.PM.Name.[df_model$MENTOR.PM.Name. == 0] <- "Not applicable"
+```
+
+## EDA
+
+```{r plot-nationality}
+# Check nationality
+ggplot(df_model, aes(x = Nationality, fill = Nationality)) +
+  geom_bar() +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  labs(
+    title = "Nationality Distribution",
+    x = "Nationality Type",
+    y = "Count"
+  ) +
+  scale_fill_brewer(palette = "Set2") +
+  theme_minimal()
+```
+
+#### 76 students (66%) are Singapore Citizens/PR and 39 (34%) are International Students, suggesting nationality may influence differences in residential satisfaction and experiences.
+
+```{r plot-year-of-study}
+# Check year of study
+ggplot(df_model, aes(x = Year_of_Study, fill = Year_of_Study)) +
+  geom_bar() +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  labs(
+    title = "Distribution of Students by Year of Study",
+    x = "Year of Study",
+    y = "Count"
+  ) +
+  scale_fill_brewer(palette = "Set2", name = "Year") +
+  theme_minimal()
+```
+
+#### The distribution of students by year is uneven (Year 1: 53, Year 2: 34, Year 3: 13, Year 4: 14, Year 5: 1), suggesting that there may not be enough data for senior years to reliably capture their satisfaction patterns.
+
+```{r plot-PCT}
+# Check PCT
+ggplot(df_model, aes(x = PCT, fill = PCT)) +
+  geom_bar() +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  labs(
+    title = "Distribution of Students by PCT",
+    x = "PCT",
+    y = "Count"
+  ) +
+  scale_fill_brewer(palette = "Paired", name = "PCT") +
+  theme_minimal()
+```
+
+#### PCT shows uneven student distribution (PCT 1: 25, PCT 6: 6, others 10-16), suggesting the model may have limited ability to capture cluster-specific effects for underrepresented PCTs.
+
+```{r plot-overall-satifaction}
+# Check overall satisfaction
+ggplot(df, aes(x = Overall_satisfaction, fill = as.factor(Overall_satisfaction))) +
+  geom_bar() +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  labs(
+    title = "Distribution of Students by Overall Satisfaction",
+    x = "Overall Satisfaction",
+    y = "Count"
+  ) +
+  scale_fill_brewer(palette = "Set2", name = "Overall Satisfaction") +
+  theme_minimal()
+```
+
+#### The distribution of Overall Satisfaction is strongly right-skewed (72 students scored 5, 35 scored 4, 8 scored ≤3), suggesting binarising the target into "Highest Satisfaction", "Yes" (5) and "No" (≤4) for a meaningful classification task.
+
+```{r plot-helpful-pm-ra}
+# Check ra / pm helpfulness
+# Count Yes/No for each interaction
+helpful_count <- df_model %>%
+  summarise(
+    RA_No = sum(RA_Helpful == "No"),
+    RA_Yes = sum(RA_Helpful == "Yes"),
+    PM_No = sum(PM_Helpful == "No"),
+    PM_Yes = sum(PM_Helpful == "Yes"),
+  ) %>%
+  pivot_longer(everything(),
+               names_to = c("category", "response"),
+               names_sep = "_",
+               values_to = "count")
+
+ggplot(helpful_count, aes(x = category, y = count, fill = response)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = count), position = position_dodge(width = 0.9), vjust = -0.5) +
+  labs(
+    title = "RA / PM Helpfulness",
+    x = "Category",
+    y = "Count"
+  ) +
+  scale_fill_manual(values = c("No" = "salmon", "Yes" = "steelblue"), name = "Response") +
+  theme_minimal()
+```
+
+#### Most students perceive their RA (94/115, 82%) and PM (93/115, 81%) as helpful, with relatively few negative responses (RA: 21, 18%; PM: 22, 19%), suggesting helpfulness is a strong positive factor.
+
+```{r plot-interacted-sc-ra-pm}
+# Check interacted with pm / sc / ra
+# Count Yes/No for each interaction
+interacted_count <- df_model %>%
+  summarise(
+    RA_No = sum(Interacted_RA == "No"),
+    RA_Yes = sum(Interacted_RA == "Yes"),
+    PM_No = sum(Interacted_with_PM == "No"),
+    PM_Yes = sum(Interacted_with_PM == "Yes"),
+    SC_No = sum(Interacted_with_SC == "No"),
+    SC_Yes = sum(Interacted_with_SC == "Yes")
+  ) %>%
+  pivot_longer(everything(),
+               names_to = c("category", "response"),
+               names_sep = "_",
+               values_to = "count")
+
+ggplot(interacted_count, aes(x = category, y = count, fill = response)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = count), position = position_dodge(width = 0.9), vjust = -0.5) +
+  labs(
+    title = "Students Interacted with PM /RA /SC",
+    x = "Category",
+    y = "Count"
+  ) +
+  scale_fill_manual(values = c("No" = "salmon", "Yes" = "steelblue"), name = "Response") +
+  theme_minimal()
+```
+
+#### Most students interacted with their PM (104/115, 90%) and RA (102/115, 89%), while SC engagement was lower (83/115, 72%), suggesting frequency of contact may influence satisfaction.
+
+```{r plot-overall-satifaction-binary}
+# Check highest satisfaction, 5 = yes, 4-0 = no
+ggplot(df_model, aes(x = Highest_satisfaction, fill = Highest_satisfaction)) +
+  geom_bar() +
+  geom_text(aes(label = after_stat(count)), stat = "count", vjust = -0.5) +
+  labs(
+    title = "Distribution of Students by Highest Satisfaction",
+    x = "Highest Satisfaction",
+    y = "Count"
+  ) +
+  scale_fill_brewer(palette = "Set2", name = "Highest Satisfaction") +
+  theme_minimal()
+```
+
+#### Binarising Overall Satisfaction into "Highest Satisfaction" suggests a clear classification target, with 63% of students as Yes" (score 5) and 37% as "No" (≤4), suitable for modeling.
+
+## Propensity Modelling
+
+```{r modelling}
+# Change variables in character format to factor
+df_model <- df_model %>% 
+  mutate_if(is.character,as.factor)
+
+# Check for duplicated rows
+sum(duplicated(df_model))
+
+# Check the dataset size 
+NROW(df_model); NCOL(df_model)
+
+# Return rows with missing values in any variable
+NROW(df_model[rowSums(is.na(df_model)) > 0, ])
+
+# Create a logistic regression propensity model to predict 
+# 'Highest_satisfaction'. Use a 70:30 train:test split. Use set.seed(0). Be sure to rebalance
+# the training dataset if appropriate to do so.
+set.seed(0)
+train_set <- createDataPartition(df_model$Highest_satisfaction, p = 0.7,list = FALSE) # Select 70% of the df_model
+train_imbalance <- df_model[train_set, ] # 70%
+test <- df_model[-train_set, ] # 30%
+
+# We will now rebalance the training set.
+summary(train_imbalance$Highest_satisfaction)
+
+# Undersample the dominant class (that is, 'yes') to get the same subsample size
+set.seed(0)  # for reproducibility
+yes_indices <- sample(which(train_imbalance$Highest_satisfaction == "Yes"), 31)
+no_indices <- sample(which(train_imbalance$Highest_satisfaction == "No"), 31)
+
+# Combine the sampled indices
+partition <- c(yes_indices, no_indices)
+
+# Create the balanced dataset from the train_imbalance dataframe
+train <- train_imbalance[partition,]
+
+# Confirm the number of instances from each response classes  
+summary(train$Highest_satisfaction) # 'No' = 31, 'Yes' = 31
+
+train$Highest_satisfaction <- factor(train$Highest_satisfaction, levels = c("No", "Yes"))
+
+# Model 1 - Use all appropriate variables. 
+# Initial model (m0) - using all variables
+m0 <- glm(Highest_satisfaction ~ .,
+          data = train,
+          family = binomial)
+
+summary(m0)
+
+# Check factor levels
+str(df_model)
+
+# Next model (m1) - remove ID, RA_Name, PM_Name, MENTOR.PM.Name.- PCT - Year_of Study; >5 factor levels
+# Excluded high-cardinality variables to avoid overfitting.
+m1 <- glm(Highest_satisfaction ~ . - ID - RA_Name - PM_Name - MENTOR.PM.Name. - PCT - Year_of_Study,
+  data = train,
+  family = binomial)
+
+summary(m1)
+
+# Next model (m2) - remove ID, RA_Name, PM_Name, MENTOR.PM.Name.- PCT - Year_of Study - Sign_up_for_PMP
+# Excluded "Sign_up_for_PMP" assuming programme sign-up may not directly affect satisfaction.
+m2 <- glm(Highest_satisfaction ~ . - ID - RA_Name - PM_Name - MENTOR.PM.Name. - PCT - Year_of_Study - Sign_up_for_PMP,
+  data = train,
+  family = binomial)
+
+summary(m2)
+```
+
+## Confusion Matrix & Propensity Score (m1)
+```{r confusion matrices & propensity score m1}
+# Create confusion matrices for the 'test' set and the 'train' set, 
+# assuming cut-off/threshold of 50%.
+
+# Find the propensity score of each student 
+y_probs_train <- predict(m1, newdata = train, type = "response")
+hist(y_probs_train)
+
+# Add propensity score to each student
+train$propensity_score <- y_probs_train
+
+# View the first few rows of students' propensity score
+head(train[, c("ID", "propensity_score")])
+
+# Predict whether each student would have highest satisfaction using the propensity model, using threshold of 50%.
+y_pred_train <- factor(ifelse(y_probs_train > 0.5, "Yes", "No"), levels = c("No", "Yes"))
+y_true_train <- train$Highest_satisfaction
+
+# Create the confusion matrix and evaluate how good the model is 
+confusionMatrix(data = y_pred_train, reference = y_true_train, mode = "everything", positive = "Yes")
+```
+#### m1 produced propensity scores close to 1, indicating a higher likelihood that a student reported the highest satisfaction.
+#### m1 also shows strong sensitivity (0.903), indicating that it performs well in correctly identifying students who reported the highest satisfaction. The specificity (0.774) value indicates a reasonable ability to correctly identify students who did not report the highest satisfaction.
+
+## ROC Curve (m1)
+
+```{r roc_curve m1}
+# Create ROC object
+roc_obj <- roc(train$Highest_satisfaction, predict(m1, type = "response"))
+
+# Plot the ROC curve
+plot(
+  roc_obj, 
+  col = "blue", 
+  main = paste0("ROC Curve (AUC = ", round(auc(roc_obj), 3), ")"), 
+  legacy.axes = TRUE
+)
+```
+
+#### AUC = 0.873 indicates that the m1 has strong ability to differentiate between students with highest satisfaction and those without.
+
+## Confusion Matrix & Propensity Score (m2)
+```{r confusion matrices & propensity score m2}
+# Create confusion matrices for the 'test' set and the 'train' set, 
+# assuming cut-off/threshold of 50%.
+
+# Find the propensity score of each student 
+y_probs_train <- predict(m2, newdata = train, type = "response")
+hist(y_probs_train)
+
+# Add propensity score to each student
+train$propensity_score <- y_probs_train
+
+# View the first few rows of students' propensity score
+head(train[, c("ID", "propensity_score")])
+
+# Predict whether each student would have highest satisfaction using the propensity model, using threshold of 50%.
+y_pred_train <- factor(ifelse(y_probs_train > 0.5, "Yes", "No"), levels = c("No", "Yes"))
+y_true_train <- train$Highest_satisfaction
+
+# Create the confusion matrix and evaluate how good the model is 
+confusionMatrix(data = y_pred_train, reference = y_true_train, mode = "everything", positive = "Yes")
+```
+
+#### m2 produced propensity scores close to 1 for students predicted to have the highest satisfaction, indicating a high likelihood of reporting highest satisfaction.
+#### m2 shows good sensitivity (0.871), meaning it correctly identifies most students who reported the highest satisfaction. Its specificity (0.774) indicates a reasonable ability to correctly identify students who did not report the highest satisfaction.
+
+## ROC Curve (m2)
+
+```{r roc_curve m2}
+# Create ROC object
+roc_obj <- roc(train$Highest_satisfaction, predict(m2, type = "response"))
+
+# Plot the ROC curve
+plot(
+  roc_obj, 
+  col = "blue", 
+  main = paste0("ROC Curve (AUC = ", round(auc(roc_obj), 3), ")"), 
+  legacy.axes = TRUE
+)
+```
+
+#### AUC of 0.866 indicates the m2 has a strong ability to distinguish highly satisfied students, though slightly lower than M1.
+
+## Conclusion
+#### Propensity scores from m1 are slightly higher which helps m1 identify highly satisfied students more reliably than m2.
+#### m1 identifies highly satisfied students more effectively while maintaining good overall accuracy.
+#### The model is based on a single semester data (n = 115, balanced training n = 62), so results are directional insights, not definitive conclusions.
+#### Model should be validated on the held-out 30% test set and on future semester data to confirm that PM_Helpful and RA_Helpful remain consistent predictors across different cohorts.
+#### Future iterations could incorporate more survey rounds, additional interaction variables, or alternative models to improve both accuracy and generalisability beyond this initial logistic regression framework.
+
