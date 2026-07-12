@@ -18,7 +18,7 @@ library(pacman)
 pacman::p_load(readxl, tidyverse, sentimentr, pROC, caret)
 
 # Load the Pioneer House survey dataset
-df <- data.frame(read_excel("../data/phrl_survey.xlsx"))
+df <- data.frame(read_excel("data/phrl_survey.xlsx"))
 str(df)
 ```
 

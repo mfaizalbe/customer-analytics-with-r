@@ -50,7 +50,7 @@ The following code chunk will load the required libraries and import the data. Y
 library(pacman)
 p_load(tidyverse, readxl, ggplot2, caret, cluster, factoextra, plotly)
 
-df <- data.frame(read.csv(file = "../data/spotify_songs.csv")) %>%
+df <- data.frame(read.csv(file = "data/spotify_songs.csv")) %>%
   select(c(track_name, track_artist, track_popularity, playlist_genre,
            danceability, energy, tempo)) %>%
   filter(track_popularity > 75 & playlist_genre == "pop")

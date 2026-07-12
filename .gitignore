@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# R session/history files
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# knitr/rmarkdown cache and temp files
+*_cache/
+*_files/

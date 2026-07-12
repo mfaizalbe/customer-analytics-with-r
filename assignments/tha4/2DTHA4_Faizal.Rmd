@@ -42,10 +42,10 @@ The following code chunk will load the required libraries and import the data. Y
 library(pacman)
 pacman::p_load(readxl, tidyverse, car, caret, proxy, arules)
 
-df_propensity <- data.frame(read.csv(file = "../data/dlpi2d-batch9-tha4-data1.csv",
+df_propensity <- data.frame(read.csv(file = "data/dlpi2d-batch9-tha4-data1.csv",
                                      na.strings = "NA"))
 
-df_mba <- data.frame(read_excel(path = "../data/dlpi2d-batch9-tha4-data2.xlsx",
+df_mba <- data.frame(read_excel(path = "data/dlpi2d-batch9-tha4-data2.xlsx",
                                 na = ""))
 ```
 

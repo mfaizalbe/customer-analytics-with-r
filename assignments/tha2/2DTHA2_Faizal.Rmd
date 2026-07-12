@@ -21,7 +21,7 @@ pacman::p_load(dplyr, lubridate, readxl, ggplot2)
 
 ```{r import data}
 #Import the library dataset
-df <- read_xlsx("../data/library_visits_THA2.xlsx")
+df <- read_xlsx("data/library_visits_THA2.xlsx")
 str(df)
 ```
 

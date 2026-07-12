@@ -24,7 +24,7 @@ pacman::p_load(tidyverse, readxl, lubridate)
 
 ## Import the dataset
 ```{r import}
-df3 <- read_excel("../data/restaurant.xlsx")
+df3 <- read_excel("data/restaurant.xlsx")
 ```
 
 ## Q1. How many unique students visited the restaurant?
